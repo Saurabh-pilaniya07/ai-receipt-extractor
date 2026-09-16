@@ -143,8 +143,44 @@ def get_receipts(
 
 @router.post("/expense-report")
 def create_expense_report(
-    request: ExpenseReportRequest,
     db: Session = Depends(get_db),
+):
+    try:
+        expenses = get_stored_expenses(db)
+
+        if not expenses:
+            raise HTTPException(
+                status_code=404,
+                detail="No stored receipts found.",
+            )
+
+        summary = ExpenseSummaryAgent().summarize(expenses)
+
+        report_path = generate_expense_report(
+            summary,
+            "part2/expense_report.xlsx",
+        )
+
+        return {
+            "message": "Expense report generated successfully.",
+            "receipt_count": summary["receipt_count"],
+            "total_amount": summary["total_amount"],
+            "category_totals": summary["category_totals"],
+            "report": str(report_path),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not generate expense report: {exc}",
+        )
+
+@router.post("/expense-report/send-email")
+def send_report_email(
+    request: ExpenseReportRequest,
 ):
     try:
         recipient_email = request.recipient_email.strip()
@@ -155,26 +191,17 @@ def create_expense_report(
                 detail="A valid recipient email is required.",
             )
 
-        expenses = get_stored_expenses(db)
+        report_path = Path("part2/expense_report.xlsx")
 
-        if not expenses:
+        if not report_path.exists():
             raise HTTPException(
                 status_code=404,
-                detail="No stored receipts found.",
+                detail=(
+                    "Expense report has not been generated yet. "
+                    "Generate the report first."
+                ),
             )
 
-        # Part 2: Summary Agent
-        summary = ExpenseSummaryAgent().summarize(
-            expenses
-        )
-
-        # Generate Excel report
-        report_path = generate_expense_report(
-            summary,
-            "part2/expense_report.xlsx",
-        )
-
-        # Send the report to the email entered in the UI.
         recipient = {
             "name": recipient_email,
             "email": recipient_email,
@@ -187,12 +214,8 @@ def create_expense_report(
         )
 
         return {
-            "message": "Expense report generated and sent successfully.",
-            "receipt_count": summary["receipt_count"],
-            "total_amount": summary["total_amount"],
-            "category_totals": summary["category_totals"],
+            "message": "Expense report sent successfully.",
             "recipient_email": recipient_email,
-            "report": str(report_path),
             "email_result": email_result,
         }
 
@@ -202,11 +225,10 @@ def create_expense_report(
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=(
-                f"Could not generate or send expense report: {exc}"
-            ),
+            detail=f"Could not send expense report: {exc}",
         )
 
+    
 @router.get("/expense-report/download")
 def download_expense_report():
     report_path = Path("part2/expense_report.xlsx")

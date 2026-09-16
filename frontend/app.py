@@ -473,190 +473,174 @@ except Exception as exc:
         f"Could not load receipts: {exc}"
     )
 
-# --------------------------------------------------
-# Expense Report
-# --------------------------------------------------
+st.header("Expense Report")
+
+st.write(
+    "Generate an expense summary from all stored receipts."
+)
+
+# ---------------------------------------------------------
+# Generate report
+# ---------------------------------------------------------
+
+if st.button(
+    "Generate Expense Report",
+    use_container_width=True,
+):
+    try:
+        response = requests.post(
+            f"{API_URL}/expense-report",
+            timeout=120,
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+
+            st.session_state["expense_report_generated"] = True
+            st.session_state["expense_report_result"] = result
+
+            st.success(
+                "Expense report generated successfully."
+            )
+
+        else:
+            st.error(
+                response.json().get(
+                    "detail",
+                    "Could not generate expense report.",
+                )
+            )
+
+    except requests.RequestException as exc:
+        st.error(
+            f"Could not connect to the API: {exc}"
+        )
+
+
+# ---------------------------------------------------------
+# Generated report information + download
+# ---------------------------------------------------------
+
+if st.session_state.get("expense_report_generated"):
+
+    result = st.session_state.get(
+        "expense_report_result",
+        {},
+    )
+
+    st.subheader("Generated Report")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric(
+            "Receipts",
+            result.get("receipt_count", 0),
+        )
+
+    with col2:
+        st.metric(
+            "Total Amount",
+            f"{result.get('total_amount', 0):.2f}",
+        )
+
+    category_totals = result.get(
+        "category_totals",
+        {},
+    )
+
+    if category_totals:
+        st.write("### Category Totals")
+
+        for category, amount in category_totals.items():
+            st.write(
+                f"**{category}:** {amount:.2f}"
+            )
+
+    report_response = requests.get(
+        f"{API_URL}/expense-report/download",
+        timeout=30,
+    )
+
+    if report_response.status_code == 200:
+        st.download_button(
+            label="Download Expense Report",
+            data=report_response.content,
+            file_name="expense_report.xlsx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            use_container_width=True,
+        )
+
+
+# ---------------------------------------------------------
+# Send report by email
+# ---------------------------------------------------------
 
 st.divider()
 
-st.markdown(
-    '<div class="section-title">'
-    'Expense Report'
-    '</div>',
-    unsafe_allow_html=True,
-)
+st.subheader("Send Report by Email")
 
 st.write(
-    "Generate an expense summary from all stored receipts "
-    "and send the Excel report by email."
+    "Send the already-generated Excel report to a recipient."
 )
 
 recipient_email = st.text_input(
     "Recipient Email",
     placeholder="example@gmail.com",
-    help="Enter the email address that should receive the expense report.",
 )
 
 if st.button(
-    "Generate & Send Expense Report",
-    type="primary",
+    "Send Expense Report",
     use_container_width=True,
 ):
-    if not recipient_email.strip():
-        st.error("Please enter a recipient email address.")
+
+    if not st.session_state.get(
+        "expense_report_generated"
+    ):
+        st.warning(
+            "Please generate the expense report first."
+        )
+
+    elif not recipient_email.strip():
+        st.warning(
+            "Please enter a recipient email."
+        )
+
     else:
-        with st.spinner(
-            "Generating report and sending email..."
-        ):
-            try:
-                response = requests.post(
-                    f"{API_URL}/expense-report",
-                    json={
-                        "recipient_email": recipient_email.strip(),
-                    },
-                    timeout=60,
+        try:
+            response = requests.post(
+                f"{API_URL}/expense-report/send-email",
+                json={
+                    "recipient_email": recipient_email.strip()
+                },
+                timeout=60,
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+
+                st.success(
+                    "Expense report sent successfully."
                 )
 
-                if response.status_code == 200:
-                    report = response.json()
+                st.json(
+                    result.get("email_result", {})
+                )
 
-                    st.success(
-                        "Expense report generated and sent successfully."
-                    )
+            else:
+                detail = response.json().get(
+                    "detail",
+                    "Could not send expense report.",
+                )
 
-                    # ----------------------------------
-                    # Report summary
-                    # ----------------------------------
-
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.metric(
-                            "Receipts Processed",
-                            report.get("receipt_count", 0),
-                        )
-
-                    with col2:
-                        total = report.get("total_amount")
-
-                        st.metric(
-                            "Total Expenses",
-                            (
-                                f"${total:,.2f}"
-                                if total is not None
-                                else "N/A"
-                            ),
-                        )
-
-                    # ----------------------------------
-                    # Category totals
-                    # ----------------------------------
-
-                    category_totals = report.get(
-                        "category_totals",
-                        {},
-                    )
-
-                    if category_totals:
-                        st.markdown(
-                            '<div class="section-title">'
-                            'Category Totals'
-                            '</div>',
-                            unsafe_allow_html=True,
-                        )
-
-                        category_data = [
-                            {
-                                "Category": category,
-                                "Total": f"${amount:,.2f}",
-                            }
-                            for category, amount
-                            in category_totals.items()
-                        ]
-
-                        st.dataframe(
-                            category_data,
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-
-                    # ----------------------------------
-                    # Email status
-                    # ----------------------------------
-
-                    email_result = report.get(
-                        "email_result"
-                    )
-
-                    if email_result:
-                        st.markdown(
-                            '<div class="section-title">'
-                            'Email Delivery'
-                            '</div>',
-                            unsafe_allow_html=True,
-                        )
-
-                        if email_result.get("sent"):
-                            st.success(
-                                "Report sent successfully to "
-                                f"{report.get('recipient_email')}."
-                            )
-                        else:
-                            st.warning(
-                                email_result.get(
-                                    "message",
-                                    "Email was not sent.",
-                                )
-                            )
-
-                    # ----------------------------------
-                    # Download report
-                    # ----------------------------------
-
-                    download_response = requests.get(
-                        f"{API_URL}/expense-report/download",
-                        timeout=30,
-                    )
-
-                    if download_response.status_code == 200:
-                        st.download_button(
-                            label="Download Expense Report",
-                            data=download_response.content,
-                            file_name="expense_report.xlsx",
-                            mime=(
-                                "application/vnd.openxmlformats-officedocument."
-                                "spreadsheetml.sheet"
-                            ),
-                            use_container_width=True,
-                        )
-                    else:
-                        st.warning(
-                            "Report was generated, but the download "
-                            "file could not be retrieved."
-                        )
-
-                else:
-                    try:
-                        error = response.json()
-                    except Exception:
-                        error = response.text
-
-                    st.error(
-                        f"Report generation failed: {error}"
-                    )
-
-            except requests.exceptions.Timeout:
                 st.error(
-                    "The report generation request timed out."
+                    f"Email sending failed: {detail}"
                 )
 
-            except requests.exceptions.ConnectionError:
-                st.error(
-                    "Could not connect to the backend. "
-                    "Make sure FastAPI is running."
-                )
-
-            except Exception as exc:
-                st.error(
-                    f"Unexpected error: {exc}"
-                )
+        except requests.RequestException as exc:
+            st.error(
+                f"Could not connect to the API: {exc}"
+            )
